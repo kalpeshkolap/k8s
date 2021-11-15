@@ -1,0 +1,102 @@
+################ Install Docker runtime ####################
+https://kubernetes.io/docs/setup/production-environment/container-runtimes/
+
+1. Add Ips in local dns
+echo 172.31.21.78 master >> /etc/hosts
+echo 172.31.17.71 node-1 >> /etc/hosts
+echo 172.31.21.80 node-2 >> /etc/hosts
+
+2. Update Hostname
+hostname master/node-1/node-2
+
+3. Install docker on all the masters & nodes
+sudo yum install docker -y
+sudo systemctl start docker
+sudo systemctl enable docker
+
+4. add drivers
+cat <<EOF | sudo tee /etc/modules-load.d/containerd.conf
+overlay
+br_netfilter
+EOF
+sudo modprobe overlay
+sudo modprobe br_netfilter
+# Setup required sysctl params, these persist across reboots.
+cat <<EOF | sudo tee /etc/sysctl.d/99-kubernetes-cri.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.ipv4.ip_forward                 = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+EOF
+# Apply sysctl params without reboot
+sudo sysctl --system
+
+5. Configure containerd
+sudo mkdir -p /etc/containerd
+containerd config default | sudo tee /etc/containerd/config.toml
+sudo systemctl restart containerd
+
+6. management of the container’s cgroups
+sudo mkdir /etc/docker
+cat <<EOF | sudo tee /etc/docker/daemon.json
+{
+  "exec-opts": ["native.cgroupdriver=systemd"],
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "100m"
+  },
+  "storage-driver": "overlay2"
+}
+EOF
+
+7. Restart Docker and enable on boot
+sudo systemctl enable docker
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+
+
+
+
+######################### install k8s components ###############
+https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/
+
+1. 
+cat <<EOF | sudo tee /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-\$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+exclude=kubelet kubeadm kubectl
+EOF
+# Set SELinux in permissive mode (effectively disabling it)
+sudo setenforce 0
+sudo sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+sudo yum install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
+sudo systemctl enable --now kubelet
+
+2. 
+kubeadm init --apiserver-advertise-address=172.31.21.78 --pod-network-cidr=192.168.0.0/16
+
+3. 
+source <(kubectl completion bash) # setup autocomplete in bash into the current shell, bash-completion package should be installed first.
+echo "source <(kubectl completion bash)" >> ~/.bashrc # add autocomplete permanently to your bash shell.
+
+4. https://docs.projectcalico.org/getting-started/kubernetes/
+curl https://docs.projectcalico.org/manifests/canal.yaml -O
+kubectl apply -f canal.yaml
+
+5. https://kubernetes.io/docs/tasks/access-application-cluster/web-ui-dashboard/
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.4.0/aio/deploy/recommended.yaml
+kubectl proxy &
+
+6. Service account for k8s Dashboard
+kubectl create serviceaccount dashboard -n default
+kubectl create clusterrolebinding dashboard-admin -n default \
+--clusterrole=cluster-admin \
+--serviceaccount=default:dashboard
+kubectl get secret $(kubectl get serviceaccount dashboard -o jsonpath="{.secrets[0].name}") -o jsonpath="{.data.token}" | base64 --decode
+
+
+
