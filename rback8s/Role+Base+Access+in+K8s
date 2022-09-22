@@ -1,3 +1,7 @@
+**** Edit k8s cluster name According to Environment (dev,test,prod) ****
+1.kubectl get configmaps -n kube-system kubeadm-config -o yaml
+2.It is a good practice to change the context name to reflect the new Cluster Name. To do that, edit your .kube/config file and change the context 
+
 **** Add User in Kubernetes Cluster ****
 1. Create Name Space
 kubectl create namespace development
